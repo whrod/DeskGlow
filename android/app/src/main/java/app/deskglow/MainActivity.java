@@ -75,6 +75,7 @@ public class MainActivity extends ComponentActivity {
             grid.addView(line, new LinearLayout.LayoutParams(-1, 0, 1));
             for (int column = 0; column < 4; column++) {
                 if (row == 0) button(line, labels[column], actions[column]);
+                else if (column == 0) button(line, "PC 절전", "sleep");
                 else line.addView(new android.view.View(this),
                         new LinearLayout.LayoutParams(0, -1, 1));
             }
@@ -117,7 +118,18 @@ public class MainActivity extends ComponentActivity {
         Button button = new Button(this);
         button.setText(label);
         row.addView(button, new LinearLayout.LayoutParams(0, -1, 1));
-        button.setOnClickListener(view -> send(action, button));
+        button.setOnClickListener(view -> {
+            if ("sleep".equals(action)) {
+                new android.app.AlertDialog.Builder(this)
+                        .setTitle("PC를 절전 모드로 전환할까요?")
+                        .setMessage("다시 사용하려면 PC에 연결된 키보드의 키를 누르세요.")
+                        .setNegativeButton("취소", null)
+                        .setPositiveButton("절전", (dialog, which) -> send(action, button))
+                        .show();
+            } else {
+                send(action, button);
+            }
+        });
         return button;
     }
 
@@ -149,8 +161,10 @@ public class MainActivity extends ComponentActivity {
                 connection.setConnectTimeout(3000);
                 connection.setReadTimeout(3000);
                 int result = connection.getResponseCode();
-                connected = result == 204;
-                message = connected ? ("check".equals(action) ? "PC 연결됨" : "명령 전송 완료") :
+                connected = result == 204 || ("sleep".equals(action) && result == 202);
+                message = result == 202 && connected ? "PC에 절전 요청을 보냈습니다." :
+                        connected ? ("check".equals(action) ? "PC 연결됨" : "명령 전송 완료") :
+                        result == 404 && "sleep".equals(action) ? "Windows DeskGlow를 업데이트하세요." :
                         result == 503 ? "Windows에서 PC 제어가 꺼져 있습니다." :
                         result == 401 ? "Windows에 표시된 새 코드를 확인하세요." : "명령 실행 실패";
             } catch (java.io.IOException error) {

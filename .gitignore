@@ -14,3 +14,4 @@ android/build/
 *.aab
 *.keystore
 *.jks
+/DeskGlowCheck.txt

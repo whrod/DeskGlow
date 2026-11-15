@@ -44,6 +44,7 @@ internal static class Program
             var keys = new Dictionary<string, byte> { ["down"] = 0xAE, ["up"] = 0xAF, ["mute"] = 0xAD };
             long lastRequestTicks = 0;
             var enabled = 1;
+            var sleepPending = 0;
             app.MapPost("/action/{action}", (HttpContext context, string action) =>
             {
                 var supplied = Encoding.UTF8.GetBytes(context.Request.Headers.Authorization.ToString());
@@ -59,6 +60,27 @@ internal static class Program
                 }
                 else if (action == "site")
                     Process.Start(new ProcessStartInfo("https://www.google.com/") { UseShellExecute = true });
+                else if (action == "sleep")
+                {
+                    if (Interlocked.CompareExchange(ref sleepPending, 1, 0) != 0)
+                        return Results.Conflict();
+                    context.Response.OnCompleted(() =>
+                    {
+                        try
+                        {
+                            if (!context.RequestAborted.IsCancellationRequested &&
+                                Volatile.Read(ref enabled) != 0 &&
+                                !Application.SetSuspendState(PowerState.Suspend, false, false))
+                                MessageBox.Show("Windows가 절전 요청을 처리하지 못했습니다.", "DeskGlow");
+                        }
+                        finally
+                        {
+                            Interlocked.Exchange(ref sleepPending, 0);
+                        }
+                        return Task.CompletedTask;
+                    });
+                    return Results.Accepted();
+                }
                 else if (action != "check")
                     return Results.NotFound();
 
