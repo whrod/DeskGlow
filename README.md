@@ -1,21 +1,17 @@
 # DeskGlow
 
-### QR 연결 (0.2)
+## Windows와 Android 연결
 
-기존 Windows 프로그램을 종료하고 `windows/bin/publish-0.2/DeskGlow.exe`를 실행합니다. 갤럭시에 새 APK를 설치하고, PC 브라우저에서 [QR 표시](http://127.0.0.1:8766/pair)를 엽니다. 갤럭시 DeskGlow에서 **QR로 연결**을 누르고 PC의 Wi-Fi 주소에 해당하는 QR을 스캔합니다.
+1. Windows에서 .NET 10 SDK로 `dotnet publish windows -c Release -o windows/bin/publish-v0.3.0`를 실행합니다.
+2. 이전 DeskGlow 프로그램이 켜져 있다면 닫고 `windows/bin/publish-v0.3.0/DeskGlow-Windows-v0.3.0.exe`를 엽니다. 방화벽 확인이 뜨면 신뢰하는 개인 네트워크에서 허용합니다.
+3. 갤럭시와 PC를 같은 Wi-Fi에 연결하세요. 갤럭시 DeskGlow에서 **QR로 연결**을 누르고 Windows 창의 QR을 스캔합니다. 주소가 여러 개면 **PC 주소**에서 두 기기가 공유하는 네트워크의 주소를 선택합니다.
+4. 갤럭시 앱이 화면에 떠 있으면 Windows 창에 **갤럭시 연결됨**이 표시되고 QR이 접힙니다. 창을 닫아도 트레이에서 실행됩니다. 트레이 아이콘을 우클릭하면 PC 제어를 켜고 끄거나 프로그램을 종료할 수 있습니다.
 
-Windows 프로그램을 다시 실행해도 페어링 코드는 유지됩니다. PC의 내부 IP가 바뀌면 새 QR을 스캔하세요. QR에는 코드가 들어 있으므로 공유하지 마세요. Android 빌드는 Gradle 9.1 이상을 사용합니다.
+연결 상태를 자동으로 갱신하려면 Android 0.3 APK를 설치하세요. 새 APK를 빌드하려면 JDK 21, Android SDK 35, Gradle 9.1을 준비하고 `gradle -p android assembleDebug`를 실행합니다. 결과 파일명에는 버전이 붙습니다.
 
-## Android 앱과 Windows 프로그램
+PC 주소가 유지되면 Windows 프로그램을 다시 실행해도 기존 연결을 사용할 수 있습니다. PC의 내부 IP가 바뀌면 새 QR을 스캔하세요. QR에는 페어링 코드가 들어 있습니다. 연결은 로컬 HTTP를 사용합니다.
 
-1. PC에서 `windows\bin\publish\DeskGlow.exe`를 실행합니다. 소스에서 실행하려면 `dotnet run --project windows`를 사용합니다. Wi-Fi 주소와 24자리 페어링 코드를 확인합니다. Windows 방화벽이 묻는 경우 신뢰하는 개인 네트워크에서만 허용합니다.
-2. `android/app/build/outputs/apk/debug/app-debug.apk`를 USB로 S20 Ultra에 복사하고, 갤럭시의 **내 파일**에서 열어 설치합니다. USB 디버깅을 이미 승인했다면 `.\.android-sdk\platform-tools\adb.exe install -r android/app/build/outputs/apk/debug/app-debug.apk`로 설치할 수도 있습니다.
-3. 갤럭시를 PC와 같은 Wi-Fi에 연결합니다. DeskGlow 앱 상단에 `http://`와 `:8766`을 포함한 PC 주소 및 코드를 입력하고 **연결 확인**을 누릅니다.
-4. 볼륨 버튼을 눌러 PC 볼륨이 바뀌는지 확인합니다. 충전 중 앱이 화면에 떠 있으면 화면을 계속 켭니다.
-
-Windows 프로그램은 현재 콘솔에서 실행합니다. 시험용 연결은 로컬 HTTP를 사용하며, Windows 프로그램을 재실행하면 새 코드가 발급됩니다. 사이트 버튼은 PC의 기본 브라우저를 사용합니다.
-
-Android SDK 35는 이 저장소의 `.android-sdk`에 설치했습니다. Android Studio에서 소스를 열 경우 `android` 폴더를 프로젝트로 열고 이 SDK 경로를 지정하세요.
+전원 제어와 Chrome 작업 세트는 Windows 창의 **기능 추가** 탭에 모았습니다. PC 켜기는 Wake-on-LAN, 종료는 실행 중인 Windows 프로그램의 명령으로 구현할 예정입니다. Chrome 작업 세트에는 사이트 주소와 창별 모니터, 위치, 크기를 설정할 예정입니다.
 
 ## 브라우저 프로토타입
 

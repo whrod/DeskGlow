@@ -5,9 +5,6 @@ import androidx.activity.result.ActivityResultLauncher;
 import com.journeyapps.barcodescanner.ScanContract;
 import com.journeyapps.barcodescanner.ScanOptions;
 import android.os.Bundle;
-import android.content.Intent;
-import android.content.IntentFilter;
-import android.os.BatteryManager;
 import android.view.WindowManager;
 import android.widget.*;
 import java.net.HttpURLConnection;
@@ -17,6 +14,14 @@ import java.util.concurrent.Executors;
 
 public class MainActivity extends ComponentActivity {
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
+    private final android.os.Handler clock = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable heartbeat = new Runnable() {
+        @Override
+        public void run() {
+            send("check", null);
+            clock.postDelayed(this, 10000);
+        }
+    };
     private EditText address;
     private EditText code;
     private TextView status;
@@ -79,25 +84,17 @@ public class MainActivity extends ComponentActivity {
             send("check", checkButton);
     }
 
-    private final android.content.BroadcastReceiver power = new android.content.BroadcastReceiver() {
-        @Override
-        public void onReceive(android.content.Context context, Intent intent) {
-            if (intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0)
-                getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-            else
-                getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        }
-    };
-
     @Override
     protected void onStart() {
         super.onStart();
-        registerReceiver(power, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        clock.postDelayed(heartbeat, 10000);
     }
 
     @Override
     protected void onStop() {
-        unregisterReceiver(power);
+        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        clock.removeCallbacks(heartbeat);
         super.onStop();
     }
 
@@ -125,14 +122,19 @@ public class MainActivity extends ComponentActivity {
     }
 
     private void send(String action, Button button) {
-        String host = address.getText().toString().trim();
-        String token = code.getText().toString().trim();
+        boolean backgroundCheck = button == null;
+        String host = backgroundCheck ? getPreferences(MODE_PRIVATE).getString("address", "") :
+                address.getText().toString().trim();
+        String token = backgroundCheck ? getPreferences(MODE_PRIVATE).getString("code", "") :
+                code.getText().toString().trim();
         if (!host.matches("http://[0-9.]+:8766/?") || !token.matches("[0-9A-Fa-f]{24}")) {
-            status.setText("PC 주소와 24자리 페어링 코드를 확인하세요.");
+            if (!backgroundCheck) status.setText("PC 주소와 24자리 페어링 코드를 확인하세요.");
             return;
         }
-        button.setEnabled(false);
-        status.setText("전송 중");
+        if (!backgroundCheck) {
+            button.setEnabled(false);
+            status.setText("전송 중");
+        }
         worker.execute(() -> {
             String message;
             HttpURLConnection connection = null;
@@ -149,12 +151,14 @@ public class MainActivity extends ComponentActivity {
                 int result = connection.getResponseCode();
                 connected = result == 204;
                 message = connected ? ("check".equals(action) ? "PC 연결됨" : "명령 전송 완료") :
+                        result == 503 ? "Windows에서 PC 제어가 꺼져 있습니다." :
                         result == 401 ? "Windows에 표시된 새 코드를 확인하세요." : "명령 실행 실패";
             } catch (java.io.IOException error) {
                 message = "PC 주소, Wi-Fi 및 Windows 방화벽을 확인하세요.";
             } finally {
                 if (connection != null) connection.disconnect();
             }
+            if (backgroundCheck) return;
             String feedback = message;
             boolean success = connected;
             runOnUiThread(() -> {
