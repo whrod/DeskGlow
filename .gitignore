@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.idea/
+.gradle/
+local.properties
+bin/
+obj/
+.sdk-tools/
+.android-sdk/
+android/app/build/
+android/build/
+/inst_user_settings.tmp
+*.apk
+*.aab
+*.keystore
+*.jks

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DeskGlow</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0 auto; max-width: 900px; padding: 16px; background: #101319; color: #edf2ff; font: 16px system-ui; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+  h1 { margin: 0; font-size: 24px; }
+  p { margin: 0; color: #b6c8db; }
+  main { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  button, .slot { min-height: 76px; border: 1px solid #425673; border-radius: 14px; background: #1b2b41; color: inherit; font: inherit; }
+  button:active { background: #325675; }
+  button:focus-visible { outline: 3px solid #8ee5ff; }
+  .slot { background: #141a24; border-style: dashed; }
+  @media (orientation: landscape) { main { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+</style>
+<header><h1>DeskGlow</h1><p role="status" id="status">버튼을 눌러 연결 확인</p></header>
+<main aria-label="PC 제어">
+  <button data-action="down">볼륨 내리기</button>
+  <button data-action="up">볼륨 올리기</button>
+  <button data-action="mute">음소거 전환</button>
+  <button data-action="site">Google 열기</button>
+  <div class="slot" aria-hidden="true"></div>
+  <div class="slot" aria-hidden="true"></div>
+  <div class="slot" aria-hidden="true"></div>
+  <div class="slot" aria-hidden="true"></div>
+</main>
+<script>
+  const token = location.hash.slice(1);
+  const status = document.querySelector("#status");
+  if (!token) status.textContent = "PC에 표시된 주소로 접속하세요";
+  for (const button of document.querySelectorAll("[data-action]")) {
+    button.disabled = !token;
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      status.textContent = "전송 중";
+      try {
+        const result = await fetch("/action", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+          body: JSON.stringify(button.dataset.action),
+        });
+        status.textContent = result.ok ? "명령 전송 완료" :
+          result.status === 401 ? "PC에 표시된 새 주소를 열어주세요" : "명령 실행 실패";
+      } catch {
+        status.textContent = "PC 연결을 확인하세요";
+      } finally {
+        button.disabled = false;
+      }
+    });
+  }
+</script>
+</html>
