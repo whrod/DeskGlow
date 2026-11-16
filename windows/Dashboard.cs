@@ -86,6 +86,14 @@ internal sealed class Dashboard : Form
         };
         root.Controls.Add(tabs, 0, 2);
         Controls.Add(root);
+        var versionBar = new StatusStrip { SizingGrip = false };
+        versionBar.Items.Add(new ToolStripStatusLabel
+        {
+            Text = $"v{typeof(Dashboard).Assembly.GetName().Version!.ToString(3)}",
+            Spring = true,
+            TextAlign = ContentAlignment.MiddleRight
+        });
+        Controls.Add(versionBar);
 
         addresses.SelectedIndexChanged += (_, _) => UpdateQr();
         timer.Tick += (_, _) =>

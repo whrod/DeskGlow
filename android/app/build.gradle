@@ -6,12 +6,16 @@ android {
     namespace 'app.deskglow'
     compileSdk 36
 
+    buildFeatures {
+        buildConfig true
+    }
+
     defaultConfig {
         applicationId 'app.deskglow'
         minSdk 26
         targetSdk 36
-        versionCode 22
-        versionName '0.10.1'
+        versionCode 23
+        versionName '0.10.2'
     }
 }
 dependencies {

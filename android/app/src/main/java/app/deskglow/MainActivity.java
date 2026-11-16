@@ -148,10 +148,17 @@ public class MainActivity extends ComponentActivity {
         connectionStatus.setTextSize(15);
         connectionStatus.setSingleLine(true);
         connectionStatus.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        FrameLayout statusGroup = new FrameLayout(this);
+        LinearLayout statusGroup = new LinearLayout(this);
+        statusGroup.setGravity(Gravity.CENTER_VERTICAL);
         header.addView(statusGroup, new LinearLayout.LayoutParams(0, dp(42), 1));
-        statusGroup.addView(connectionStatus, new FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_VERTICAL));
-        connectionStatus.setPadding(dp(14), dp(10), dp(14), dp(10));
+        statusGroup.addView(connectionStatus, new LinearLayout.LayoutParams(0, -2, 1));
+        connectionStatus.setPadding(dp(4), dp(8), dp(3), dp(8));
+        TextView version = new TextView(this);
+        version.setText("v" + BuildConfig.VERSION_NAME);
+        version.setTextSize(10);
+        version.setSingleLine(true);
+        applyReadableText(version, 0xFFE0E8F1);
+        statusGroup.addView(version, new LinearLayout.LayoutParams(-2, -2));
         Button settingsButton = new Button(this);
         settingsButton.setText("연결 설정");
         addHeaderButton(header, settingsButton);
@@ -186,7 +193,7 @@ public class MainActivity extends ComponentActivity {
                 .setPrompt("Windows의 DeskGlow QR을 스캔하세요.")
                 .setBeepEnabled(false)));
         status = new TextView(this);
-        status.setTextColor(SoftControls.INK);
+        applyReadableText(status, 0xFFF5F8FC);
         status.setPadding(dp(12), 0, dp(12), 0);
         screen.addView(status);
         LinearLayout controls = new LinearLayout(this);
@@ -231,9 +238,9 @@ public class MainActivity extends ComponentActivity {
         boolean paired = !address.getText().toString().isEmpty() && !code.getText().toString().isEmpty();
         settings.setVisibility(paired ? android.view.View.GONE : android.view.View.VISIBLE);
         if (paired) {
-            showConnection("PC 확인 중", 0xFF795927);
+            showConnection("PC 확인 중", 0xFFFFE6AA);
         } else {
-            showConnection("PC 연결 필요", SoftControls.INK);
+            showConnection("PC 연결 필요", 0xFFF5F8FC);
         }
     }
 
@@ -319,8 +326,7 @@ public class MainActivity extends ComponentActivity {
     }
 
     private void styleHeaderButton(Button button, boolean accented) {
-        button.setTextColor(accented ? SoftControls.ACCENT : SoftControls.INK);
-        button.setShadowLayer(dp(2), 0, 0, 0xD0FFFFFF);
+        applyReadableText(button, accented ? 0xFFD6F2FF : 0xFFF5F8FC);
         button.setBackground(SoftControls.surface(this, 15, accented, accented));
     }
 
@@ -453,8 +459,7 @@ public class MainActivity extends ComponentActivity {
         panel.setGravity(android.view.Gravity.CENTER_HORIZONTAL);
         volumeValue = new TextView(this);
         volumeValue.setTextSize(15);
-        volumeValue.setTextColor(SoftControls.INK);
-        volumeValue.setShadowLayer(dp(2), 0, 0, 0xE8FFFFFF);
+        applyReadableText(volumeValue, 0xFFF5F8FC);
         volumeValue.setGravity(Gravity.CENTER);
         FrameLayout capsule = new FrameLayout(this);
         panel.addView(capsule, new LinearLayout.LayoutParams(dp(54), 0, 1));
@@ -600,9 +605,8 @@ public class MainActivity extends ComponentActivity {
         TileButton tile = new TileButton(this, icon);
         String label = buttonLabel(action);
         tile.setText(action.isEmpty() ? (editingAppearance ? "+" : "") : label);
-        tile.setTextColor("sleep".equals(action) || "close-windows".equals(action)
-                ? SoftControls.ROSE : SoftControls.INK);
-        tile.setShadowLayer(dp(3), 0, 0, 0xE8FFFFFF);
+        applyReadableText(tile, "sleep".equals(action) || "close-windows".equals(action)
+                ? 0xFFFFDFE6 : 0xFFF5F8FC);
         tile.setTypeface(null, android.graphics.Typeface.NORMAL);
         tile.setPadding(dp(7), dp(icon == null ? 6 : 27), dp(7), dp(7));
         tile.setTextSize(13);
@@ -654,7 +658,7 @@ public class MainActivity extends ComponentActivity {
                     Math.max(5 * scale, getTotalPaddingTop() - 27 * scale));
             canvas.scale(scale, scale);
             iconPaint.setColor(isEnabled() ? getCurrentTextColor() : 0xFF8998AA);
-            iconPaint.setShadowLayer(2.5f, 0, 0, 0xD0FFFFFF);
+            iconPaint.setShadowLayer(1.8f, 0, 0, 0xFF142033);
             iconPath.reset();
             SoftControls.drawIcon(canvas, iconPaint, iconPath, icon);
             canvas.restore();
@@ -980,21 +984,24 @@ public class MainActivity extends ComponentActivity {
 
     private void updateConnection(int response, boolean success) {
         if (success)
-            showConnection("PC 연결됨", 0xFF22634F);
+            showConnection("PC 연결됨", 0xFFC5F9DB);
         else if (response == 503)
-            showConnection("PC 제어 꺼짐", 0xFF795927);
+            showConnection("PC 제어 꺼짐", 0xFFFFE6AA);
         else if (response == 401)
-            showConnection("다시 연결 필요", 0xFF795927);
+            showConnection("다시 연결 필요", 0xFFFFE6AA);
         else if (response == -1)
-            showConnection("PC 연결 안 됨", SoftControls.ROSE);
+            showConnection("PC 연결 안 됨", 0xFFFFDFE6);
+    }
+
+    private void applyReadableText(TextView view, int color) {
+        view.setTextColor(color);
+        view.setShadowLayer(dp(2), 0, 0, 0xFF142033);
     }
 
     private void showConnection(String label, int color) {
         if (("●  " + label).contentEquals(connectionStatus.getText()) && color == connectionStatus.getCurrentTextColor())
             return;
         connectionStatus.setText("●  " + label);
-        connectionStatus.setTextColor(color);
-        connectionStatus.setShadowLayer(dp(2), 0, 0, 0xE0FFFFFF);
-        connectionStatus.setBackground(SoftControls.surface(this, 16, true, true));
+        applyReadableText(connectionStatus, color);
     }
 }
