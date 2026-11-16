@@ -1,7 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
-    <application android:label="DeskGlow" android:usesCleartextTraffic="true"
-        android:allowBackup="false" android:theme="@android:style/Theme.Material.NoActionBar">
+    <application android:label="DeskGlow" android:icon="@drawable/deskglow_icon" android:usesCleartextTraffic="true"
+        android:allowBackup="false" android:theme="@style/DeskGlowTheme">
         <activity android:name=".MainActivity" android:screenOrientation="sensorLandscape"
             android:exported="true">
             <intent-filter>

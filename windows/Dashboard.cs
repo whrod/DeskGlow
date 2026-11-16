@@ -11,7 +11,8 @@ internal sealed class Dashboard : Form
     private readonly string code;
     private readonly Func<long> lastRequest;
     private readonly Label status = new() { AutoSize = true, Font = new Font("Malgun Gothic", 14, FontStyle.Bold) };
-    private readonly NotifyIcon tray = new() { Icon = SystemIcons.Application, Text = "DeskGlow" };
+    private readonly NotifyIcon tray = new() { Text = "DeskGlow" };
+    private readonly Icon appIcon;
     private Control pairing = null!;
     private bool showPairing;
     private bool enabled = true;
@@ -23,12 +24,17 @@ internal sealed class Dashboard : Form
     };
     private readonly System.Windows.Forms.Timer timer = new() { Interval = 2000 };
 
-    public Dashboard(int port, string code, Workspace workspace, Func<long> lastRequest, Action<bool> setEnabled)
+    public Dashboard(int port, string code, Workspace workspace, ButtonNames buttonNames, Func<long> lastRequest, Action<bool> setEnabled)
     {
         this.port = port;
         this.code = code;
         this.lastRequest = lastRequest;
         Text = "DeskGlow";
+        using (var iconStream = typeof(Dashboard).Assembly.GetManifestResourceStream("DeskGlow.Icon")!)
+        using (var icon = new Icon(iconStream))
+            appIcon = (Icon)icon.Clone();
+        Icon = appIcon;
+        tray.Icon = appIcon;
         Font = new Font("Malgun Gothic", 10);
         AutoScaleMode = AutoScaleMode.Dpi;
         StartPosition = FormStartPosition.CenterScreen;
@@ -52,9 +58,10 @@ internal sealed class Dashboard : Form
         tabs.TabPages.Add(CreateConnectionTab());
         var workspaceTab = new WorkspaceTab(workspace);
         tabs.TabPages.Add(workspaceTab);
+        var namesTab = new ButtonNamesTab(buttonNames);
+        tabs.TabPages.Add(namesTab);
         tabs.TabPages.Add(new DeveloperTab());
-        tabs.TabPages.Add(CreateFeatureTab("기능 추가", "전원 제어 · PC 절전",
-            "갤럭시에서 PC 절전을 누르고, 연결된 키보드로 깨우세요."));
+        tabs.TabPages.Add(CreateHelpTab());
         var menu = new ContextMenuStrip();
         menu.Items.Add("DeskGlow 열기", null, (_, _) => OpenWindow());
         var toggle = new ToolStripMenuItem("PC 제어 끄기");
@@ -85,6 +92,7 @@ internal sealed class Dashboard : Form
         {
             RefreshStatus();
             workspaceTab.RefreshStatus();
+            if (tabs.SelectedTab == namesTab) namesTab.RefreshNames();
         };
         RefreshStatus();
         timer.Start();
@@ -198,14 +206,45 @@ internal sealed class Dashboard : Form
         Dock = DockStyle.Fill, ColumnCount = 1, RowCount = rows, Padding = new Padding(padding)
     };
 
-    private static TabPage CreateFeatureTab(string title, string state, string description)
+    private static TabPage CreateHelpTab()
     {
-        var tab = new TabPage(title) { BackColor = Color.White };
-        var content = Column(2, 18);
-        content.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        content.Controls.Add(new Label { Text = state, AutoSize = true }, 0, 0);
-        content.Controls.Add(new Label { Text = description, Dock = DockStyle.Fill }, 0, 1);
-        tab.Controls.Add(content);
+        var tab = new TabPage("도움말") { BackColor = Color.White, Padding = new Padding(14) };
+        tab.Controls.Add(new TextBox
+        {
+            Dock = DockStyle.Fill, Multiline = true, ReadOnly = true,
+            BorderStyle = BorderStyle.None, BackColor = Color.White, ScrollBars = ScrollBars.Vertical,
+            Text = """
+                연결과 QR
+                갤럭시와 PC를 같은 Wi-Fi에 연결하세요. Windows 연결 탭에서 PC 주소를 선택하고, 갤럭시에서 연결 설정 → QR로 연결을 누릅니다. 수동 연결에는 주소와 코드 복사를 사용하세요. PC IP가 바뀌면 QR을 다시 스캔합니다.
+
+                연결 상태와 트레이
+                앱 상단에서 PC 연결 여부를 확인할 수 있습니다. Windows 창의 X는 창만 숨깁니다. 트레이 아이콘을 더블클릭하면 창을 열고, 우클릭하면 PC 제어를 켜거나 끄거나 DeskGlow를 종료할 수 있습니다.
+
+                작업 배치 만들기
+                Windows의 작업 배치 → 새 배치에서 이름을 입력합니다. 현재 창 가져오기를 누르고 원하는 창을 체크한 뒤 저장합니다. 기존 배치는 목록에서 선택해 이름과 창을 수정하거나 삭제할 수 있습니다. 갤럭시에 배치별 버튼이 표시되기까지 최대 약 10초가 걸립니다.
+
+                창 복원
+                배치 이름 버튼은 저장된 창을 모두 복원합니다. Chrome은 창마다 활성 탭의 웹 주소를 저장합니다. Chrome 버튼은 마지막으로 요청한 배치의 Chrome 창만 복원하며, 처음에는 목록의 첫 번째 배치를 사용합니다. ChatGPT는 Windows의 ChatGPT/Codex 앱을 엽니다. 관리자 PowerShell을 복원할 때는 PC에서 UAC를 승인하세요.
+
+                버튼 배치와 볼륨
+                갤럭시에서 버튼을 길게 누른 채 다른 슬롯에 놓으세요. 버튼이 있는 자리에 놓으면 두 위치가 바뀝니다. 오른쪽 슬라이더를 드래그한 뒤 손을 떼면 PC 볼륨이 적용됩니다. 아래 버튼으로 음소거를 전환합니다.
+
+                화면 꾸미기
+                갤럭시에서 꾸미기를 누르세요. 배경을 눌러 사진을 선택하거나 기본 배경으로 돌아갈 수 있습니다. 버튼이나 빈 슬롯을 누르면 이미지를 선택하거나 지울 수 있습니다. 완료를 누르면 버튼이 다시 PC 명령을 실행합니다.
+
+                버튼 이름
+                Windows의 버튼 이름 탭이나 갤럭시의 꾸미기 → 버튼 이름 바꾸기에서 이름을 변경할 수 있습니다. 이름은 연결된 PC에 저장되고 양쪽 앱에 반영됩니다.
+
+                절전과 화면 유지
+                갤럭시에서 PC 절전을 누르면 바로 절전을 요청합니다. PC를 다시 쓰려면 연결된 키보드의 키를 누르거나 본체 전원 버튼을 짧게 누르세요. 갤럭시에서 DeskGlow가 화면에 떠 있는 동안에는 화면이 자동으로 꺼지지 않습니다.
+
+                창 모두 닫기
+                갤럭시에서 창 모두 닫기를 누르고 확인하세요. 저장 확인이 뜨면 PC에서 처리하세요. 관리자 PowerShell을 닫으려면 PC에서 UAC를 승인하세요. DeskGlow는 트레이에서 계속 실행됩니다.
+
+                개발용 · 무선 APK 설치
+                갤럭시의 개발자 옵션에서 무선 디버깅을 켭니다. 최초 한 번 PC의 adb pair로 페어링하세요. 이후 개발용 탭에서 기기 검색을 누릅니다. 기기가 안 보이면 갤럭시 무선 디버깅 메인 화면의 IP 주소와 연결 포트를 입력하세요. APK를 확인하고 설치 / 업데이트를 누릅니다.
+                """.ReplaceLineEndings()
+        });
         return tab;
     }
 
@@ -220,5 +259,6 @@ internal sealed class Dashboard : Form
             picture.Image?.Dispose();
         }
         base.Dispose(disposing);
+        if (disposing) appIcon?.Dispose();
     }
 }

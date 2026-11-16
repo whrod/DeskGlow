@@ -12,6 +12,10 @@ namespace DeskGlow;
 
 internal static class Program
 {
+    private static readonly System.Text.Json.JsonSerializerOptions CatalogJson = new()
+    {
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
     [STAThread]
     private static void Main(string[] args)
     {
@@ -21,6 +25,11 @@ internal static class Program
             if (args is ["--restore-admin-powershell", ..])
             {
                 Workspace.RestoreAdministratorPowerShellAsync(args).GetAwaiter().GetResult();
+                return;
+            }
+            if (args is ["--close-admin-powershell", ..])
+            {
+                Workspace.CloseAdministratorPowerShell(args);
                 return;
             }
             Run(args);
@@ -52,7 +61,26 @@ internal static class Program
             long lastRequestTicks = 0;
             var enabled = 1;
             var sleepPending = 0;
+            var closeApprovalPending = 0;
             var workspace = new Workspace();
+            var buttonNames = new ButtonNames(workspace);
+            app.MapPost("/buttons/name", (HttpContext context, ButtonRename change) =>
+            {
+                var supplied = Encoding.UTF8.GetBytes(context.Request.Headers.Authorization.ToString());
+                if (!CryptographicOperations.FixedTimeEquals(supplied, expected)) return Results.Unauthorized();
+                if (Volatile.Read(ref enabled) == 0) return Results.StatusCode(503);
+                if (change.Id is null || change.Name is null) return Results.BadRequest();
+                try
+                {
+                    buttonNames.Save(change.Id, change.Name);
+                    return Results.NoContent();
+                }
+                catch (InvalidOperationException) { return Results.BadRequest(); }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+                {
+                    return Results.StatusCode(422);
+                }
+            });
             app.MapPost("/action/{action}", (HttpContext context, string action) =>
             {
                 var supplied = Encoding.UTF8.GetBytes(context.Request.Headers.Authorization.ToString());
@@ -68,7 +96,27 @@ internal static class Program
                 }
                 else if (action == "site")
                     Process.Start(new ProcessStartInfo("https://www.google.com/") { UseShellExecute = true });
-                else if (action is "workspace" or "chrome" or "chatgpt")
+                else if (action == "close-windows")
+                {
+                    var (requested, blocked, administrator) = Workspace.CloseApplicationWindows();
+                    context.Response.Headers["X-DeskGlow-Close-Requested"] = requested.ToString();
+                    context.Response.Headers["X-DeskGlow-Close-Blocked"] = blocked.ToString();
+                    context.Response.Headers["X-DeskGlow-Close-Approval"] = administrator.Length.ToString();
+                    if (administrator.Length > 0 && Interlocked.CompareExchange(ref closeApprovalPending, 1, 0) == 0)
+                    {
+                        context.Response.OnCompleted(async () =>
+                        {
+                            try { await Workspace.CloseElevatedPowerShellAsync(administrator); }
+                            catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException)
+                            {
+                                MessageBox.Show("관리자 PowerShell 닫기 요청을 시작하지 못했습니다.", "DeskGlow");
+                            }
+                            finally { Interlocked.Exchange(ref closeApprovalPending, 0); }
+                        });
+                    }
+                }
+                else if (action is "workspace" or "chrome" or "chatgpt" ||
+                    (action.StartsWith("workspace-", StringComparison.Ordinal) && Guid.TryParseExact(action.AsSpan(10), "N", out _)))
                     return Results.StatusCode(workspace.Request(action));
                 else if (action == "toggle-mute" || action.StartsWith("volume-", StringComparison.Ordinal))
                 {
@@ -106,7 +154,20 @@ internal static class Program
                 else if (action != "check")
                     return Results.NotFound();
                 else
+                {
                     WriteAudioState(context.Response);
+                    try
+                    {
+                        var summaries = workspace.LoadPresets().Select(preset => new { id = preset.Id, name = preset.Name });
+                        context.Response.Headers["X-DeskGlow-Workspaces"] = Convert.ToBase64String(
+                            System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(summaries, CatalogJson));
+                        var aliases = buttonNames.List().Where(button => button.Name != button.DefaultName)
+                            .ToDictionary(button => button.Id, button => button.Name);
+                        context.Response.Headers["X-DeskGlow-Button-Names"] = Convert.ToBase64String(
+                            System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(aliases, CatalogJson));
+                    }
+                    catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Text.Json.JsonException) { }
+                }
 
                 if (context.Connection.RemoteIpAddress is { } remote && !IPAddress.IsLoopback(remote))
                     Interlocked.Exchange(ref lastRequestTicks, DateTime.UtcNow.Ticks);
@@ -114,7 +175,7 @@ internal static class Program
             });
 
             app.StartAsync().GetAwaiter().GetResult();
-            using var window = new Dashboard(port, code, workspace, () => Interlocked.Read(ref lastRequestTicks),
+            using var window = new Dashboard(port, code, workspace, buttonNames, () => Interlocked.Read(ref lastRequestTicks),
                 value =>
                 {
                     Volatile.Write(ref enabled, value ? 1 : 0);
@@ -128,6 +189,8 @@ internal static class Program
             app.DisposeAsync().AsTask().GetAwaiter().GetResult();
         }
     }
+
+    private sealed record ButtonRename(string? Id, string? Name);
 
     private static bool WriteAudioState(HttpResponse response, int? level = null, bool toggleMute = false)
     {

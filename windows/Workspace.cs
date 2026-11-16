@@ -20,7 +20,12 @@ internal sealed class Workspace
     }
 
     private sealed record Window(nint Handle, string App, string Title, bool Administrator);
+    internal sealed record Preset(string Id, string Name, Entry[] Entries);
+    public const int MaxPresets = 24;
     private readonly string path;
+    private readonly string catalogPath;
+    private readonly object catalogLock = new();
+    private string? activePreset;
     private int restoring;
     private string status = "";
     public string Status => Volatile.Read(ref status);
@@ -29,19 +34,55 @@ internal sealed class Workspace
     {
         path = file ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "DeskGlow", "workspace.json");
+        catalogPath = Path.Combine(Path.GetDirectoryName(path)!, "workspaces.json");
     }
 
-    public Entry[] Load() => File.Exists(path)
-        ? JsonSerializer.Deserialize<Entry[]>(File.ReadAllText(path)) ?? [] : [];
-
-    public void Save(Entry[] entries)
+    public Preset[] LoadPresets()
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        lock (catalogLock)
+        {
+            if (File.Exists(catalogPath))
+                return JsonSerializer.Deserialize<Preset[]>(File.ReadAllText(catalogPath)) ?? [];
+            var legacy = File.Exists(path) ? JsonSerializer.Deserialize<Entry[]>(File.ReadAllText(path)) : null;
+            return legacy is { Length: > 0 } ? [new Preset("workspace", "기존 작업 배치", legacy)] : [];
+        }
+    }
+
+    public Preset SavePreset(string? id, string name, Entry[] entries)
+    {
+        name = name.Trim();
+        if (name.Length is < 1 or > 32 || entries.Length == 0)
+            throw new InvalidOperationException("이름을 1~32자로 입력하고 창을 하나 이상 선택하세요.");
+        lock (catalogLock)
+        {
+            var presets = LoadPresets().ToList();
+            if (presets.Any(preset => preset.Id != id && string.Equals(preset.Name, name, StringComparison.OrdinalIgnoreCase)))
+                throw new InvalidOperationException("같은 이름의 작업 배치가 있습니다.");
+            var index = presets.FindIndex(preset => preset.Id == id);
+            if (index < 0 && presets.Count >= MaxPresets)
+                throw new InvalidOperationException($"작업 배치는 최대 {MaxPresets}개까지 저장할 수 있습니다.");
+            var saved = new Preset(id ?? $"workspace-{Guid.NewGuid():N}", name, entries);
+            if (index < 0) presets.Add(saved);
+            else presets[index] = saved;
+            WritePresets(presets);
+            return saved;
+        }
+    }
+
+    public void DeletePreset(string id)
+    {
+        lock (catalogLock)
+            WritePresets(LoadPresets().Where(preset => preset.Id != id).ToArray());
+    }
+
+    private void WritePresets(IEnumerable<Preset> presets)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(catalogPath)!);
+        var temporary = catalogPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            File.WriteAllText(temporary, JsonSerializer.Serialize(entries, new JsonSerializerOptions { WriteIndented = true }));
-            File.Move(temporary, path, overwrite: true);
+            File.WriteAllText(temporary, JsonSerializer.Serialize(presets));
+            File.Move(temporary, catalogPath, overwrite: true);
         }
         finally { File.Delete(temporary); }
     }
@@ -74,8 +115,17 @@ internal sealed class Workspace
         Entry[] entries;
         try
         {
-            entries = action == "chatgpt" ? [] : Load()
-                .Where(entry => action != "chrome" || entry.App == "Chrome").ToArray();
+            var presets = action == "chatgpt" ? [] : LoadPresets();
+            var selected = action switch
+            {
+                "chatgpt" => null,
+                "chrome" => presets.FirstOrDefault(preset => preset.Id == activePreset) ?? presets.FirstOrDefault(),
+                "workspace" => presets.FirstOrDefault(preset => preset.Id == action) ?? presets.FirstOrDefault(),
+                _ => presets.FirstOrDefault(preset => preset.Id == action)
+            };
+            entries = selected?.Entries.Where(entry => action != "chrome" || entry.App == "Chrome").ToArray() ?? [];
+            if (action is not ("chrome" or "chatgpt") && entries.Length > 0)
+                activePreset = selected?.Id;
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException)
         {
@@ -122,6 +172,8 @@ internal sealed class Workspace
     {
         var used = new HashSet<nint>();
         var failures = new List<string>();
+        var mixedChromeWindows = 0;
+        var chromePrepared = false;
         foreach (var entry in entries)
         {
             try
@@ -129,9 +181,12 @@ internal sealed class Workspace
                 var available = FindWindows();
                 var matching = available.Where(window => window.App == entry.App &&
                     window.Administrator == entry.Administrator && !used.Contains(window.Handle));
-                var target = matching.FirstOrDefault(window => entry.App == "Chrome"
-                    ? ReadChromeAddress(window.Handle) == entry.Url
-                    : window.Title == entry.Title);
+                var target = entry.App == "Chrome"
+                    ? matching.Where(window => SameChromePage(ReadChromeAddress(window.Handle), entry.Url))
+                        .OrderBy(window => ReadChromeTabCount(window.Handle) != 1)
+                        .ThenBy(window => Screen.FromHandle(window.Handle).DeviceName != entry.Display)
+                        .FirstOrDefault()
+                    : matching.FirstOrDefault(window => window.Title == entry.Title);
                 if (target is null && entry.App != "Chrome")
                     target = matching.FirstOrDefault();
                 if (entry.App == "PowerShell" && entry.Administrator)
@@ -139,6 +194,17 @@ internal sealed class Workspace
                     if (target is not null) used.Add(target.Handle);
                     await RestoreElevatedWindowAsync(target?.Handle ?? 0, entry);
                     continue;
+                }
+                if (target is null && entry.App == "Chrome" && !chromePrepared)
+                {
+                    chromePrepared = true;
+                    if (!available.Any(window => window.App == "Chrome"))
+                    {
+                        await PrepareChromeAsync();
+                        available = FindWindows();
+                        target = available.FirstOrDefault(window => window.App == "Chrome" &&
+                            !used.Contains(window.Handle) && SameChromePage(ReadChromeAddress(window.Handle), entry.Url));
+                    }
                 }
                 if (target is null)
                 {
@@ -148,20 +214,38 @@ internal sealed class Workspace
                     {
                         await Task.Delay(200);
                         target = FindWindows().FirstOrDefault(window => window.App == entry.App &&
-                            window.Administrator == entry.Administrator && !existing.Contains(window.Handle));
+                            window.Administrator == entry.Administrator && !existing.Contains(window.Handle) &&
+                            (entry.App != "Chrome" || SameChromePage(ReadChromeAddress(window.Handle), entry.Url)));
                     }
                     if (target is null) throw new InvalidOperationException("새 창을 찾지 못했습니다.");
                 }
                 used.Add(target.Handle);
                 await PlaceAsync(target.Handle, entry);
+                if (entry.App == "Chrome" && ReadChromeTabCount(target.Handle) > 1)
+                    mixedChromeWindows++;
             }
             catch (Exception error)
             {
                 failures.Add($"{entry.App} · {error.Message}");
             }
         }
-        Volatile.Write(ref status, failures.Count == 0 ? $"창 {entries.Length}개 복원 완료" :
-            $"창 {entries.Length - failures.Count}/{entries.Length}개 복원 · {string.Join(" / ", failures)}");
+        var result = failures.Count == 0 ? $"창 {entries.Length}개 복원 완료" :
+            $"창 {entries.Length - failures.Count}/{entries.Length}개 복원 · {string.Join(" / ", failures)}";
+        if (mixedChromeWindows > 0)
+            result += $" · Chrome 창 {mixedChromeWindows}개에 추가 탭이 있습니다. 필요한 탭만 남겨 주세요.";
+        Volatile.Write(ref status, result);
+    }
+
+    private static async Task PrepareChromeAsync()
+    {
+        // A cold launch with URLs can merge them with Chrome's restored session tabs.
+        var start = new ProcessStartInfo(FindChrome()) { UseShellExecute = true };
+        start.ArgumentList.Add("--no-startup-window");
+        using var process = Process.Start(start);
+        if (process is null) return;
+        try { process.WaitForInputIdle(3000); }
+        catch (InvalidOperationException) { }
+        await Task.Delay(300);
     }
 
     private static async Task PlaceAsync(nint handle, Entry entry)
@@ -181,10 +265,68 @@ internal sealed class Workspace
             for (var attempt = 0; attempt < 10 && (IsIconic(handle) || IsZoomed(handle)); attempt++)
                 await Task.Delay(50);
         }
-        if (!SetWindowPos(handle, 0, x, y, width, height, 0x0010))
-            throw new Win32Exception(Marshal.GetLastWin32Error());
-        if (entry.Maximized) ShowWindowAsync(handle, 3);
+        if (entry.Maximized)
+        {
+            MoveWindow(handle, x, y, width, height, raise: true);
+            for (var attempt = 0; attempt < 10; attempt++)
+            {
+                await Task.Delay(100);
+                if (Screen.FromHandle(handle).DeviceName != screen.DeviceName)
+                {
+                    MoveWindow(handle, x, y, width, height, raise: false);
+                    continue;
+                }
+                if (IsZoomed(handle)) return;
+                ShowWindowAsync(handle, 3);
+            }
+            throw new InvalidOperationException("저장된 모니터에서 창을 최대화하지 못했습니다.");
+        }
+
+        // Chrome may resize again when it processes a DPI change on the destination monitor.
+        MoveWindow(handle, x, y, width, height, raise: true);
+        var stable = 0;
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            await Task.Delay(150);
+            if (GetWindowRect(handle, out var actual) &&
+                Math.Abs(actual.Left - x) <= 4 && Math.Abs(actual.Top - y) <= 4 &&
+                Math.Abs(actual.Right - x - width) <= 4 && Math.Abs(actual.Bottom - y - height) <= 4)
+            {
+                if (++stable == 2) return;
+                continue;
+            }
+            stable = 0;
+            MoveWindow(handle, x, y, width, height, raise: false);
+        }
+        throw new InvalidOperationException("창이 저장된 위치 또는 크기를 유지하지 못했습니다.");
     }
+
+    private static void MoveWindow(nint handle, int x, int y, int width, int height, bool raise)
+    {
+        const uint noActivate = 0x0010;
+        const uint noZOrder = 0x0004;
+        if (!SetWindowPos(handle, 0, x, y, width, height, noActivate | (raise ? 0 : noZOrder)))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+    }
+
+    private static bool SameChromePage(string? current, string? saved)
+    {
+        if (current is null || saved is null) return false;
+        if (string.Equals(current, saved, StringComparison.Ordinal)) return true;
+        if (!Uri.TryCreate(current, UriKind.Absolute, out var first) ||
+            !Uri.TryCreate(saved, UriKind.Absolute, out var second))
+            return false;
+        return IsGoogleHome(first) && IsGoogleHome(second) ||
+            IsYouTubeHome(first) && IsYouTubeHome(second);
+    }
+
+    private static bool IsGoogleHome(Uri uri) =>
+        uri.Host is "google.com" or "www.google.com" && uri.AbsolutePath is "/" or "/webhp" &&
+        uri.Fragment.Length == 0 && !Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query).ContainsKey("q");
+
+    private static bool IsYouTubeHome(Uri uri) =>
+        uri.Host is "youtube.com" or "www.youtube.com" && uri.AbsolutePath == "/" &&
+        uri.Query.Length == 0 && uri.Fragment.Length == 0;
 
     private static async Task RestoreElevatedWindowAsync(nint handle, Entry entry)
     {
@@ -326,6 +468,84 @@ internal sealed class Workspace
         return result;
     }
 
+    internal static nint[] FindClosableWindows()
+    {
+        const int extendedStyle = -20;
+        const int toolWindow = 0x80;
+        const int appWindow = 0x40000;
+        const int noActivate = 0x08000000;
+        var result = new List<nint>();
+        EnumWindows((handle, _) =>
+        {
+            if (!IsWindowVisible(handle) || !IsWindowEnabled(handle) || handle == GetShellWindow() ||
+                (DwmGetWindowAttribute(handle, 14, out var cloaked, sizeof(int)) == 0 && cloaked != 0))
+                return true;
+            var style = GetWindowLong(handle, extendedStyle);
+            if ((style & appWindow) == 0 &&
+                ((style & (toolWindow | noActivate)) != 0 || GetWindow(handle, 4) != 0))
+                return true;
+            GetWindowThreadProcessId(handle, out var pid);
+            if (pid == Environment.ProcessId || GetWindowTextLength(handle) == 0) return true;
+            var className = new StringBuilder(128);
+            GetClassName(handle, className, className.Capacity);
+            if (className.ToString() is not ("Progman" or "WorkerW" or "Shell_TrayWnd" or "Shell_SecondaryTrayWnd" or "#32770"))
+                result.Add(handle);
+            return true;
+        }, 0);
+        return result.ToArray();
+    }
+
+    internal static (int Requested, int Blocked, nint[] AdministratorPowerShell) CloseApplicationWindows()
+    {
+        const uint wmClose = 0x0010;
+        var windows = FindClosableWindows();
+        var administrator = FindWindows().Where(window => window.App == "PowerShell" && window.Administrator)
+            .Select(window => window.Handle).ToHashSet();
+        var awaitingApproval = new List<nint>();
+        var requested = 0;
+        foreach (var handle in windows)
+        {
+            if (PostMessage(handle, wmClose, 0, 0))
+                requested++;
+            else if (Marshal.GetLastWin32Error() == 5 && administrator.Contains(handle))
+                awaitingApproval.Add(handle);
+        }
+        return (requested, windows.Length - requested - awaitingApproval.Count, awaitingApproval.ToArray());
+    }
+
+    internal static async Task CloseElevatedPowerShellAsync(nint[] handles)
+    {
+        if (handles.Length == 0) return;
+        var executable = Environment.ProcessPath ?? throw new InvalidOperationException("DeskGlow 실행 경로를 찾지 못했습니다.");
+        var start = new ProcessStartInfo(executable) { UseShellExecute = true, Verb = "runas" };
+        start.ArgumentList.Add("--close-admin-powershell");
+        foreach (var handle in handles)
+            start.ArgumentList.Add(handle.ToInt64().ToString(CultureInfo.InvariantCulture));
+        try
+        {
+            using var process = Process.Start(start);
+            if (process is not null) await process.WaitForExitAsync();
+        }
+        catch (Win32Exception error) when (error.NativeErrorCode == 1223)
+        {
+            // The user dismissed the Windows approval prompt.
+        }
+    }
+
+    internal static void CloseAdministratorPowerShell(string[] args)
+    {
+        using var identity = WindowsIdentity.GetCurrent();
+        if (!new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
+            throw new InvalidOperationException("관리자 PowerShell을 닫으려면 Windows 승인이 필요합니다.");
+        var targets = args.Skip(1).Select(arg => long.TryParse(arg, NumberStyles.None, CultureInfo.InvariantCulture,
+            out var handle) ? (nint)handle : 0).ToHashSet();
+        var eligible = FindClosableWindows().ToHashSet();
+        foreach (var window in FindWindows())
+            if (window.App == "PowerShell" && window.Administrator && targets.Contains(window.Handle) &&
+                eligible.Contains(window.Handle))
+                PostMessage(window.Handle, 0x0010, 0, 0);
+    }
+
     private static string? ReadChromeAddress(nint handle)
     {
         try
@@ -341,6 +561,22 @@ internal sealed class Workspace
         }
         catch (Exception error) when (error is COMException or InvalidOperationException or ArgumentException) { }
         return null;
+    }
+
+    private static int ReadChromeTabCount(nint handle)
+    {
+        try
+        {
+            var root = AutomationElement.FromHandle(handle);
+            var tabs = root.FindFirst(TreeScope.Descendants, new PropertyCondition(
+                AutomationElement.ClassNameProperty, "TabContainerImpl"));
+            return tabs?.FindAll(TreeScope.Children, new PropertyCondition(
+                AutomationElement.ControlTypeProperty, ControlType.TabItem)).Count ?? 0;
+        }
+        catch (Exception error) when (error is COMException or InvalidOperationException or ArgumentException)
+        {
+            return 0;
+        }
     }
 
     private static string? NormalizeUrl(string? value)
@@ -359,6 +595,13 @@ internal sealed class Workspace
 
     [DllImport("user32.dll")] private static extern bool EnumWindows(EnumerateWindow callback, nint data);
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(nint handle);
+    [DllImport("user32.dll")] private static extern bool IsWindowEnabled(nint handle);
+    [DllImport("user32.dll")] private static extern nint GetShellWindow();
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowLong(nint handle, int index);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowTextLength(nint handle);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(nint handle, StringBuilder name, int count);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool PostMessage(nint handle, uint message, nint wParam, nint lParam);
     [DllImport("user32.dll")] private static extern bool IsIconic(nint handle);
     [DllImport("user32.dll")] private static extern bool IsZoomed(nint handle);
     [DllImport("user32.dll")] private static extern nint GetWindow(nint handle, uint command);
