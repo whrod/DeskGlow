@@ -1,5 +1,14 @@
 # DeskGlow 변경 기록
 
+## v0.4.0 · Windows / Android
+
+- Android 오른쪽에 PC 볼륨을 표시하는 세로 슬라이더와 음소거 버튼을 추가했습니다.
+- Windows **개발용** 탭에서 무선 ADB 기기를 연결하고 Android APK를 설치할 수 있습니다.
+
+## v0.3.3 · Android
+
+- 상단에 PC 연결 상태를 표시하고, 주소 입력과 QR 스캔을 **연결 설정**으로 모았습니다.
+
 ## v0.3.2 · Windows / Android
 
 - Android에 **PC 절전** 버튼과 확인 창을 추가했습니다. 절전 상태에서는 PC에 연결된 키보드로 깨울 수 있습니다.

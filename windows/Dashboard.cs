@@ -50,6 +50,7 @@ internal sealed class Dashboard : Form
 
         var tabs = new TabControl { Dock = DockStyle.Fill };
         tabs.TabPages.Add(CreateConnectionTab());
+        tabs.TabPages.Add(new DeveloperTab());
         tabs.TabPages.Add(CreateFeatureTab("기능 추가", "전원 제어 · PC 절전",
             "갤럭시에서 PC 절전을 누르고, 연결된 키보드로 깨우세요." + Environment.NewLine + Environment.NewLine +
             "Chrome 작업 세트 · 준비 중" + Environment.NewLine + "사이트 주소, 모니터, 창 위치 및 크기"));

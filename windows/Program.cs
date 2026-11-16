@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.Connections;
 using Microsoft.Extensions.Logging;
+using NAudio.CoreAudioApi;
 
 namespace DeskGlow;
 
@@ -60,6 +61,18 @@ internal static class Program
                 }
                 else if (action == "site")
                     Process.Start(new ProcessStartInfo("https://www.google.com/") { UseShellExecute = true });
+                else if (action == "toggle-mute" || action.StartsWith("volume-", StringComparison.Ordinal))
+                {
+                    int? level = null;
+                    if (action != "toggle-mute")
+                    {
+                        if (!int.TryParse(action.AsSpan(7), out var requested) || requested is < 0 or > 100)
+                            return Results.BadRequest();
+                        level = requested;
+                    }
+                    if (!WriteAudioState(context.Response, level, action == "toggle-mute"))
+                        return Results.StatusCode(422);
+                }
                 else if (action == "sleep")
                 {
                     if (Interlocked.CompareExchange(ref sleepPending, 1, 0) != 0)
@@ -83,6 +96,8 @@ internal static class Program
                 }
                 else if (action != "check")
                     return Results.NotFound();
+                else
+                    WriteAudioState(context.Response);
 
                 if (context.Connection.RemoteIpAddress is { } remote && !IPAddress.IsLoopback(remote))
                     Interlocked.Exchange(ref lastRequestTicks, DateTime.UtcNow.Ticks);
@@ -102,6 +117,27 @@ internal static class Program
         finally
         {
             app.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+    }
+
+    private static bool WriteAudioState(HttpResponse response, int? level = null, bool toggleMute = false)
+    {
+        try
+        {
+            using var enumerator = new MMDeviceEnumerator();
+            using var device = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+            var volume = device.AudioEndpointVolume;
+            if (level is int value)
+                volume.MasterVolumeLevelScalar = value / 100f;
+            if (toggleMute)
+                volume.Mute = !volume.Mute;
+            response.Headers["X-DeskGlow-Volume"] = ((int)Math.Round(volume.MasterVolumeLevelScalar * 100)).ToString();
+            response.Headers["X-DeskGlow-Muted"] = volume.Mute ? "1" : "0";
+            return true;
+        }
+        catch (Exception error) when (error is COMException or InvalidOperationException)
+        {
+            return false;
         }
     }
 
