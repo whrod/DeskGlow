@@ -1,6 +1,6 @@
 # DeskGlow
 
-갤럭시를 Windows용 스트림덱으로 쓰는 앱입니다. [버전별 변경 기록](CHANGELOG.md)
+갤럭시를 Windows용 스트림덱으로 쓰는 앱입니다. [제품 사이트 및 Windows 다운로드](https://whrod.github.io/DeskGlow/) · [버전별 변경 기록](CHANGELOG.md)
 
 ## 사용하기
 
@@ -15,6 +15,6 @@ Windows의 **작업 배치 → 새 배치**에서 이름을 입력하고 **현�
 ## 빌드
 
 - Windows (.NET 10 SDK) — `dotnet publish windows -c Release -o windows/bin/publish-v0.9.0`
-- Android (JDK 21, Android SDK 35, Gradle 9.1) — `gradle -p android assembleDebug`. 버전명이 붙은 APK는 `android/app/build/outputs/dist/`에 생성됩니다.
+- Android (JDK 21, Android SDK 36, Gradle 9.1) — `gradle -p android assembleDebug`. 버전명이 붙은 APK는 `android/app/build/outputs/dist/`에 생성됩니다.
 
 무선 디버깅으로 페어링한 갤럭시는 Windows의 **개발용 → 기기 검색 → 설치 / 업데이트**에서 새 APK를 설치할 수 있습니다. 검색되지 않으면 갤럭시 무선 디버깅 메인 화면의 **IP 주소 및 포트**를 입력해 연결하세요.
