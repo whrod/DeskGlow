@@ -23,7 +23,7 @@ internal sealed class Dashboard : Form
     };
     private readonly System.Windows.Forms.Timer timer = new() { Interval = 2000 };
 
-    public Dashboard(int port, string code, Func<long> lastRequest, Action<bool> setEnabled)
+    public Dashboard(int port, string code, Workspace workspace, Func<long> lastRequest, Action<bool> setEnabled)
     {
         this.port = port;
         this.code = code;
@@ -50,10 +50,11 @@ internal sealed class Dashboard : Form
 
         var tabs = new TabControl { Dock = DockStyle.Fill };
         tabs.TabPages.Add(CreateConnectionTab());
+        var workspaceTab = new WorkspaceTab(workspace);
+        tabs.TabPages.Add(workspaceTab);
         tabs.TabPages.Add(new DeveloperTab());
         tabs.TabPages.Add(CreateFeatureTab("기능 추가", "전원 제어 · PC 절전",
-            "갤럭시에서 PC 절전을 누르고, 연결된 키보드로 깨우세요." + Environment.NewLine + Environment.NewLine +
-            "Chrome 작업 세트 · 준비 중" + Environment.NewLine + "사이트 주소, 모니터, 창 위치 및 크기"));
+            "갤럭시에서 PC 절전을 누르고, 연결된 키보드로 깨우세요."));
         var menu = new ContextMenuStrip();
         menu.Items.Add("DeskGlow 열기", null, (_, _) => OpenWindow());
         var toggle = new ToolStripMenuItem("PC 제어 끄기");
@@ -80,7 +81,11 @@ internal sealed class Dashboard : Form
         Controls.Add(root);
 
         addresses.SelectedIndexChanged += (_, _) => UpdateQr();
-        timer.Tick += (_, _) => RefreshStatus();
+        timer.Tick += (_, _) =>
+        {
+            RefreshStatus();
+            workspaceTab.RefreshStatus();
+        };
         RefreshStatus();
         timer.Start();
     }

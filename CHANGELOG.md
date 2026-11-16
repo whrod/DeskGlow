@@ -1,5 +1,14 @@
 # DeskGlow 변경 기록
 
+## v0.5.1 · Windows
+
+- 작업 배치에서 새로 여는 PowerShell 창을 검은 배경으로 시작합니다.
+
+## v0.5.0 · Windows / Android
+
+- Android 버튼을 길게 눌러 슬롯 사이로 옮기고 배치를 저장할 수 있습니다.
+- Windows에서 Chrome의 활성 탭, ChatGPT/Codex, PowerShell의 창 배치를 저장합니다. Android에서 전체 배치나 Chrome 창을 복원하고 ChatGPT를 따로 열 수 있습니다.
+
 ## v0.4.0 · Windows / Android
 
 - Android 오른쪽에 PC 볼륨을 표시하는 세로 슬라이더와 음소거 버튼을 추가했습니다.

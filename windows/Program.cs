@@ -18,6 +18,11 @@ internal static class Program
         ApplicationConfiguration.Initialize();
         try
         {
+            if (args is ["--restore-admin-powershell", ..])
+            {
+                Workspace.RestoreAdministratorPowerShellAsync(args).GetAwaiter().GetResult();
+                return;
+            }
             Run(args);
         }
         catch (IOException error) when (error.InnerException is AddressInUseException)
@@ -27,6 +32,7 @@ internal static class Program
         }
         catch (Exception error)
         {
+            Environment.ExitCode = 1;
             MessageBox.Show(error.Message, "DeskGlow 시작 오류", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
@@ -46,6 +52,7 @@ internal static class Program
             long lastRequestTicks = 0;
             var enabled = 1;
             var sleepPending = 0;
+            var workspace = new Workspace();
             app.MapPost("/action/{action}", (HttpContext context, string action) =>
             {
                 var supplied = Encoding.UTF8.GetBytes(context.Request.Headers.Authorization.ToString());
@@ -61,6 +68,8 @@ internal static class Program
                 }
                 else if (action == "site")
                     Process.Start(new ProcessStartInfo("https://www.google.com/") { UseShellExecute = true });
+                else if (action is "workspace" or "chrome" or "chatgpt")
+                    return Results.StatusCode(workspace.Request(action));
                 else if (action == "toggle-mute" || action.StartsWith("volume-", StringComparison.Ordinal))
                 {
                     int? level = null;
@@ -105,7 +114,7 @@ internal static class Program
             });
 
             app.StartAsync().GetAwaiter().GetResult();
-            using var window = new Dashboard(port, code, () => Interlocked.Read(ref lastRequestTicks),
+            using var window = new Dashboard(port, code, workspace, () => Interlocked.Read(ref lastRequestTicks),
                 value =>
                 {
                     Volatile.Write(ref enabled, value ? 1 : 0);

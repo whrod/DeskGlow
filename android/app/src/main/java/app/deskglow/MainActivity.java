@@ -5,6 +5,9 @@ import androidx.activity.result.ActivityResultLauncher;
 import com.journeyapps.barcodescanner.ScanContract;
 import com.journeyapps.barcodescanner.ScanOptions;
 import android.os.Bundle;
+import android.content.ClipData;
+import android.view.DragEvent;
+import android.view.View;
 import android.view.WindowManager;
 import android.widget.*;
 import java.net.HttpURLConnection;
@@ -33,6 +36,16 @@ public class MainActivity extends ComponentActivity {
     private Button muteButton;
     private boolean draggingVolume;
     private boolean volumePending;
+    private final FrameLayout[] slots = new FrameLayout[8];
+    private static final java.util.Map<String, String> ACTION_LABELS = new java.util.HashMap<>();
+    static {
+        ACTION_LABELS.put("workspace", "작업 배치");
+        ACTION_LABELS.put("chatgpt", "ChatGPT");
+        ACTION_LABELS.put("chrome", "Chrome");
+        ACTION_LABELS.put("site", "Google 열기");
+        ACTION_LABELS.put("sleep", "PC 절전");
+    }
+    private final String[] slotActions = {"workspace", "chatgpt", "chrome", "site", "sleep", "", "", ""};
     private final ActivityResultLauncher<ScanOptions> scanner = registerForActivityResult(
             new ScanContract(), result -> {
                 String payload = result.getContents();
@@ -90,14 +103,20 @@ public class MainActivity extends ComponentActivity {
         LinearLayout grid = new LinearLayout(this);
         grid.setOrientation(LinearLayout.VERTICAL);
         controls.addView(grid, new LinearLayout.LayoutParams(0, -1, 1));
+        loadSlots();
         for (int row = 0; row < 2; row++) {
             LinearLayout line = new LinearLayout(this);
             grid.addView(line, new LinearLayout.LayoutParams(-1, 0, 1));
             for (int column = 0; column < 4; column++) {
-                if (row == 0 && column == 0) button(line, "Google 열기", "site");
-                else if (column == 0) button(line, "PC 절전", "sleep");
-                else line.addView(new android.view.View(this),
-                        new LinearLayout.LayoutParams(0, -1, 1));
+                int position = row * 4 + column;
+                FrameLayout slot = new FrameLayout(this);
+                slots[position] = slot;
+                LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(0, -1, 1);
+                size.setMargins(dp(4), dp(4), dp(4), dp(4));
+                line.addView(slot, size);
+                slot.setBackground(slotBackground(false));
+                slot.setOnDragListener((view, event) -> dragSlot(position, event));
+                renderSlot(position);
             }
         }
         controls.addView(createVolumePanel(), new LinearLayout.LayoutParams(dp(112), -1));
@@ -176,6 +195,67 @@ public class MainActivity extends ComponentActivity {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
+    private void loadSlots() {
+        String order = getPreferences(MODE_PRIVATE).getString("grid-order", "");
+        String[] saved = order.split(",", -1);
+        if (saved.length != slotActions.length) return;
+        java.util.Set<String> actions = new java.util.HashSet<>();
+        for (String action : saved) {
+            if (!action.isEmpty() && (!ACTION_LABELS.containsKey(action) || !actions.add(action)))
+                return;
+        }
+        if (actions.size() == ACTION_LABELS.size())
+            System.arraycopy(saved, 0, slotActions, 0, saved.length);
+    }
+
+    private android.graphics.drawable.GradientDrawable slotBackground(boolean highlighted) {
+        android.graphics.drawable.GradientDrawable drawable = new android.graphics.drawable.GradientDrawable();
+        drawable.setCornerRadius(dp(10));
+        drawable.setColor(highlighted ? 0x6636CD9E : 0xFF252B35);
+        drawable.setStroke(dp(1), highlighted ? 0xFF79E5AE : 0xFF515B6C);
+        return drawable;
+    }
+
+    private void renderSlot(int position) {
+        FrameLayout slot = slots[position];
+        slot.removeAllViews();
+        String action = slotActions[position];
+        if (action.isEmpty()) return;
+        Button tile = new Button(this);
+        tile.setText(ACTION_LABELS.get(action));
+        tile.setAllCaps(false);
+        tile.setOnClickListener(view -> activate(action, tile));
+        tile.setOnLongClickListener(view -> tile.startDragAndDrop(
+                ClipData.newPlainText("DeskGlow", ""), new View.DragShadowBuilder(tile), position, 0));
+        slot.addView(tile, new FrameLayout.LayoutParams(-1, -1));
+    }
+
+    private boolean dragSlot(int destination, DragEvent event) {
+        if (!(event.getLocalState() instanceof Integer)) return false;
+        int source = (Integer) event.getLocalState();
+        switch (event.getAction()) {
+            case DragEvent.ACTION_DRAG_ENTERED:
+                slots[destination].setForeground(slotBackground(true));
+                break;
+            case DragEvent.ACTION_DRAG_EXITED:
+            case DragEvent.ACTION_DRAG_ENDED:
+                slots[destination].setForeground(null);
+                break;
+            case DragEvent.ACTION_DROP:
+                if (source != destination) {
+                    String previous = slotActions[destination];
+                    slotActions[destination] = slotActions[source];
+                    slotActions[source] = previous;
+                    getPreferences(MODE_PRIVATE).edit()
+                            .putString("grid-order", String.join(",", slotActions)).apply();
+                    renderSlot(source);
+                    renderSlot(destination);
+                }
+                break;
+        }
+        return true;
+    }
+
     private void sendVolume(String action) {
         if (volumePending) return;
         volumePending = true;
@@ -197,7 +277,11 @@ public class MainActivity extends ComponentActivity {
         Button button = new Button(this);
         button.setText(label);
         row.addView(button, new LinearLayout.LayoutParams(0, -1, 1));
-        button.setOnClickListener(view -> {
+        button.setOnClickListener(view -> activate(action, button));
+        return button;
+    }
+
+    private void activate(String action, Button button) {
             if ("sleep".equals(action)) {
                 new android.app.AlertDialog.Builder(this)
                         .setTitle("PC를 절전 모드로 전환할까요?")
@@ -208,13 +292,12 @@ public class MainActivity extends ComponentActivity {
             } else {
                 send(action, button);
             }
-        });
-        return button;
     }
 
     private void send(String action, Button button) {
         boolean backgroundCheck = button == null;
         boolean audioAction = action.startsWith("volume-") || "toggle-mute".equals(action);
+        boolean workspaceAction = "workspace".equals(action) || "chrome".equals(action);
         boolean useSavedConnection = backgroundCheck || audioAction;
         String host = useSavedConnection ? getPreferences(MODE_PRIVATE).getString("address", "") :
                 address.getText().toString().trim();
@@ -252,9 +335,13 @@ public class MainActivity extends ComponentActivity {
                 responseCode = result;
                 levelHeader = connection.getHeaderField("X-DeskGlow-Volume");
                 mutedHeader = "1".equals(connection.getHeaderField("X-DeskGlow-Muted"));
-                connected = result == 204 || ("sleep".equals(action) && result == 202);
-                message = result == 202 && connected ? "PC에 절전 요청을 보냈습니다." :
+                connected = result == 204 || result == 202;
+                message = result == 202 ? ("sleep".equals(action) ? "PC에 절전 요청을 보냈습니다." :
+                        "chatgpt".equals(action) ? "PC에 ChatGPT 열기를 요청했습니다." :
+                                "PC에 창 복원을 요청했습니다. 결과는 Windows의 작업 배치 탭에 표시됩니다.") :
                         connected ? ("check".equals(action) || audioAction ? "" : "명령 전송 완료") :
+                        result == 404 && workspaceAction ? "Windows의 작업 배치에서 복원할 창을 저장하세요." :
+                        result == 409 && (workspaceAction || "chatgpt".equals(action)) ? "PC에서 다른 창 요청을 처리 중입니다." :
                         result == 404 && ("sleep".equals(action) || audioAction) ? "Windows DeskGlow를 업데이트하세요." :
                         result == 422 && audioAction ? "PC의 기본 오디오 출력 장치를 확인하세요." :
                         result == 503 ? "Windows에서 PC 제어가 꺼져 있습니다." :
