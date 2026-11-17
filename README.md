@@ -14,6 +14,8 @@ Windows의 **작업 배치 → 새 배치**에서 이름을 입력하고 **현�
 
 ## 배포
 
+[업데이트 및 배포 절차](updatelogic.md)
+
 홈페이지는 GitHub Pages가 `main`의 `docs/` 변경을 자동 배포합니다. 새 공개 릴리스를 최신 릴리스로 지정하고 `DeskGlow-Windows-x64.exe`와 `DeskGlow-Android.apk`를 함께 첨부하면 홈페이지 다운로드가 새 파일로 연결됩니다.
 
 ## 빌드

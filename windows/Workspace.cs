@@ -474,24 +474,41 @@ internal sealed class Workspace
         const int toolWindow = 0x80;
         const int appWindow = 0x40000;
         const int noActivate = 0x08000000;
-        var result = new List<nint>();
+        const uint owner = 4;
+        var candidates = new Dictionary<nint, bool>();
+        var shell = GetShellWindow();
+
         EnumWindows((handle, _) =>
         {
-            if (!IsWindowVisible(handle) || !IsWindowEnabled(handle) || handle == GetShellWindow() ||
+            if (!IsWindowVisible(handle) || handle == shell ||
                 (DwmGetWindowAttribute(handle, 14, out var cloaked, sizeof(int)) == 0 && cloaked != 0))
                 return true;
+
             var style = GetWindowLong(handle, extendedStyle);
-            if ((style & appWindow) == 0 &&
-                ((style & (toolWindow | noActivate)) != 0 || GetWindow(handle, 4) != 0))
+            bool explicitlyListed = (style & appWindow) != 0;
+            if (!explicitlyListed && ((style & (toolWindow | noActivate)) != 0 || GetWindowTextLength(handle) == 0))
                 return true;
+
             GetWindowThreadProcessId(handle, out var pid);
-            if (pid == Environment.ProcessId || GetWindowTextLength(handle) == 0) return true;
+            if (pid == Environment.ProcessId) return true;
+
             var className = new StringBuilder(128);
             GetClassName(handle, className, className.Capacity);
-            if (className.ToString() is not ("Progman" or "WorkerW" or "Shell_TrayWnd" or "Shell_SecondaryTrayWnd" or "#32770"))
-                result.Add(handle);
+            if (className.ToString() is not ("Progman" or "WorkerW" or "Shell_TrayWnd" or "Shell_SecondaryTrayWnd"))
+                candidates.Add(handle, explicitlyListed);
             return true;
         }, 0);
+
+        // An owned window normally shares its owner's Alt+Tab entry. Keep it when
+        // it has its own entry or when no visible application window owns that group.
+        var result = new List<nint>();
+        foreach (var (handle, explicitlyListed) in candidates)
+        {
+            var parent = explicitlyListed ? 0 : GetWindow(handle, owner);
+            while (parent != 0 && !candidates.ContainsKey(parent))
+                parent = GetWindow(parent, owner);
+            if (parent == 0) result.Add(handle);
+        }
         return result.ToArray();
     }
 
@@ -595,7 +612,6 @@ internal sealed class Workspace
 
     [DllImport("user32.dll")] private static extern bool EnumWindows(EnumerateWindow callback, nint data);
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(nint handle);
-    [DllImport("user32.dll")] private static extern bool IsWindowEnabled(nint handle);
     [DllImport("user32.dll")] private static extern nint GetShellWindow();
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowLong(nint handle, int index);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowTextLength(nint handle);
