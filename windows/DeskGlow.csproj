@@ -4,7 +4,7 @@
     <OutputType>WinExe</OutputType>
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
-    <Version>0.9.2</Version>
+    <Version>0.10.0</Version>
     <ApplicationIcon>Assets/DeskGlow.ico</ApplicationIcon>
     <AssemblyName>DeskGlow-Windows-v$(Version)</AssemblyName>
     <ImplicitUsings>enable</ImplicitUsings>

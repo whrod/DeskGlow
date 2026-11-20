@@ -15,6 +15,7 @@ internal sealed class WorkspaceTab : TabPage
     private readonly Button create = new() { Text = "새 배치", AutoSize = true };
     private readonly Button restore = new() { Text = "열기", AutoSize = true };
     private readonly Button delete = new() { Text = "삭제", AutoSize = true };
+    private readonly ComboBox chromeProfile = new() { Width = 420, DropDownStyle = ComboBoxStyle.DropDownList };
     private string? editingId;
     private bool busy;
 
@@ -22,17 +23,21 @@ internal sealed class WorkspaceTab : TabPage
     {
         this.workspace = workspace;
         BackColor = Color.White;
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 6, Padding = new Padding(14) };
-        for (var row = 0; row < 3; row++) layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 7, Padding = new Padding(14) };
+        for (var row = 0; row < 4; row++) layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.Controls.Add(new Label { Text = "저장한 작업 배치는 갤럭시에 이름별 버튼으로 표시됩니다.", AutoSize = true }, 0, 0);
         layout.Controls.Add(Row(presets, create, restore, delete), 0, 1);
         layout.Controls.Add(Row(name, capture, save), 0, 2);
-        layout.Controls.Add(windows, 0, 3);
-        layout.Controls.Add(feedback, 0, 4);
-        layout.Controls.Add(result, 0, 5);
+        chromeProfile.Items.Add(new ChromeProfiles.Profile(null, "Chrome 기본 프로필"));
+        chromeProfile.Items.AddRange(ChromeProfiles.List());
+        chromeProfile.SelectedIndex = 0;
+        layout.Controls.Add(Row(new Label { Text = "Chrome 프로필", AutoSize = true }, chromeProfile), 0, 3);
+        layout.Controls.Add(windows, 0, 4);
+        layout.Controls.Add(feedback, 0, 5);
+        layout.Controls.Add(result, 0, 6);
         Controls.Add(layout);
 
         presets.SelectionChangeCommitted += (_, _) => OpenPreset(presets.SelectedItem as Workspace.Preset);
@@ -71,6 +76,10 @@ internal sealed class WorkspaceTab : TabPage
     {
         editingId = preset?.Id;
         name.Text = preset?.Name ?? "";
+        chromeProfile.SelectedIndex = 0;
+        for (var index = 1; index < chromeProfile.Items.Count; index++)
+            if (((ChromeProfiles.Profile)chromeProfile.Items[index]!).Directory == preset?.ChromeProfile)
+                chromeProfile.SelectedIndex = index;
         SetEntries(preset?.Entries ?? []);
         feedback.Text = preset is null ? "이름을 입력하고 현재 창을 가져오세요." : $"저장된 창 {preset.Entries.Length}개";
         UpdateButtons();
@@ -117,7 +126,7 @@ internal sealed class WorkspaceTab : TabPage
     private void Save() => TryEdit(() =>
     {
         var selected = windows.CheckedItems.Cast<Workspace.Entry>().ToArray();
-        var saved = workspace.SavePreset(editingId, name.Text, selected);
+        var saved = workspace.SavePreset(editingId, name.Text, selected, ((ChromeProfiles.Profile)chromeProfile.SelectedItem!).Directory);
         Reload(saved.Id);
         feedback.Text = $"‘{saved.Name}’ 저장 완료 · 창 {selected.Length}개";
     });

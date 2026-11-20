@@ -20,12 +20,13 @@ internal sealed class Workspace
     }
 
     private sealed record Window(nint Handle, string App, string Title, bool Administrator);
-    internal sealed record Preset(string Id, string Name, Entry[] Entries);
+    internal sealed record Preset(string Id, string Name, Entry[] Entries, string? ChromeProfile = null);
     public const int MaxPresets = 24;
     private readonly string path;
     private readonly string catalogPath;
     private readonly object catalogLock = new();
     private string? activePreset;
+    private readonly Dictionary<nint, string> chromeWindows = new();
     private int restoring;
     private string status = "";
     public string Status => Volatile.Read(ref status);
@@ -48,7 +49,7 @@ internal sealed class Workspace
         }
     }
 
-    public Preset SavePreset(string? id, string name, Entry[] entries)
+    public Preset SavePreset(string? id, string name, Entry[] entries, string? chromeProfile = null)
     {
         name = name.Trim();
         if (name.Length is < 1 or > 32 || entries.Length == 0)
@@ -61,7 +62,7 @@ internal sealed class Workspace
             var index = presets.FindIndex(preset => preset.Id == id);
             if (index < 0 && presets.Count >= MaxPresets)
                 throw new InvalidOperationException($"작업 배치는 최대 {MaxPresets}개까지 저장할 수 있습니다.");
-            var saved = new Preset(id ?? $"workspace-{Guid.NewGuid():N}", name, entries);
+            var saved = new Preset(id ?? $"workspace-{Guid.NewGuid():N}", name, entries, chromeProfile);
             if (index < 0) presets.Add(saved);
             else presets[index] = saved;
             WritePresets(presets);
@@ -113,6 +114,7 @@ internal sealed class Workspace
     {
         if (Interlocked.CompareExchange(ref restoring, 1, 0) != 0) return 409;
         Entry[] entries;
+        string? chromeProfile;
         try
         {
             var presets = action == "chatgpt" ? [] : LoadPresets();
@@ -123,6 +125,7 @@ internal sealed class Workspace
                 "workspace" => presets.FirstOrDefault(preset => preset.Id == action) ?? presets.FirstOrDefault(),
                 _ => presets.FirstOrDefault(preset => preset.Id == action)
             };
+            chromeProfile = selected?.ChromeProfile;
             entries = selected?.Entries.Where(entry => action != "chrome" || entry.App == "Chrome").ToArray() ?? [];
             if (action is not ("chrome" or "chatgpt") && entries.Length > 0)
                 activePreset = selected?.Id;
@@ -157,7 +160,7 @@ internal sealed class Workspace
                     Volatile.Write(ref status, "ChatGPT 열기 요청 완료");
                 }
                 else
-                    await RestoreAsync(entries);
+                    await RestoreAsync(entries, chromeProfile);
             }
             catch (Exception error)
             {
@@ -168,7 +171,7 @@ internal sealed class Workspace
         return 202;
     }
 
-    private async Task RestoreAsync(Entry[] entries)
+    private async Task RestoreAsync(Entry[] entries, string? chromeProfile)
     {
         var used = new HashSet<nint>();
         var failures = new List<string>();
@@ -182,7 +185,7 @@ internal sealed class Workspace
                 var matching = available.Where(window => window.App == entry.App &&
                     window.Administrator == entry.Administrator && !used.Contains(window.Handle));
                 var target = entry.App == "Chrome"
-                    ? matching.Where(window => SameChromePage(ReadChromeAddress(window.Handle), entry.Url))
+                    ? matching.Where(window => (chromeProfile == null || chromeWindows.GetValueOrDefault(window.Handle) == chromeProfile) && SameChromePage(ReadChromeAddress(window.Handle), entry.Url))
                         .OrderBy(window => ReadChromeTabCount(window.Handle) != 1)
                         .ThenBy(window => Screen.FromHandle(window.Handle).DeviceName != entry.Display)
                         .FirstOrDefault()
@@ -200,16 +203,16 @@ internal sealed class Workspace
                     chromePrepared = true;
                     if (!available.Any(window => window.App == "Chrome"))
                     {
-                        await PrepareChromeAsync();
+                        await PrepareChromeAsync(chromeProfile);
                         available = FindWindows();
                         target = available.FirstOrDefault(window => window.App == "Chrome" &&
-                            !used.Contains(window.Handle) && SameChromePage(ReadChromeAddress(window.Handle), entry.Url));
+                            !used.Contains(window.Handle) && (chromeProfile == null || chromeWindows.GetValueOrDefault(window.Handle) == chromeProfile) && SameChromePage(ReadChromeAddress(window.Handle), entry.Url));
                     }
                 }
                 if (target is null)
                 {
                     var existing = available.Select(window => window.Handle).ToHashSet();
-                    Launch(entry);
+                    Launch(entry, chromeProfile);
                     for (var attempt = 0; attempt < 30 && target is null; attempt++)
                     {
                         await Task.Delay(200);
@@ -219,6 +222,7 @@ internal sealed class Workspace
                     }
                     if (target is null) throw new InvalidOperationException("새 창을 찾지 못했습니다.");
                 }
+                if (entry.App == "Chrome" && chromeProfile != null) chromeWindows[target.Handle] = chromeProfile;
                 used.Add(target.Handle);
                 await PlaceAsync(target.Handle, entry);
                 if (entry.App == "Chrome" && ReadChromeTabCount(target.Handle) > 1)
@@ -236,11 +240,12 @@ internal sealed class Workspace
         Volatile.Write(ref status, result);
     }
 
-    private static async Task PrepareChromeAsync()
+    private static async Task PrepareChromeAsync(string? chromeProfile)
     {
         // A cold launch with URLs can merge them with Chrome's restored session tabs.
         var start = new ProcessStartInfo(FindChrome()) { UseShellExecute = true };
         start.ArgumentList.Add("--no-startup-window");
+        if (chromeProfile != null) start.ArgumentList.Add("--profile-directory=" + chromeProfile);
         using var process = Process.Start(start);
         if (process is null) return;
         try { process.WaitForInputIdle(3000); }
@@ -382,13 +387,19 @@ internal sealed class Workspace
         using var process = Process.Start(start);
     }
 
-    private static void Launch(Entry entry)
+    private static void Launch(Entry entry, string? chromeProfile)
     {
         switch (entry.App)
         {
             case "Chrome" when NormalizeUrl(entry.Url) is string url:
                 var executable = FindChrome();
-                LaunchProcess(executable, "--new-window", url);
+                if (chromeProfile == null) LaunchProcess(executable, "--new-window", url);
+                else
+                {
+                    if (!ChromeProfiles.List().Any(profile => profile.Directory == chromeProfile))
+                        throw new InvalidOperationException("저장한 Chrome 프로필을 찾지 못했습니다.");
+                    LaunchProcess(executable, "--profile-directory=" + chromeProfile, "--new-window", url);
+                }
                 break;
             case "ChatGPT":
                 LaunchChatGpt();
